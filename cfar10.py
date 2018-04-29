@@ -1,205 +1,210 @@
-"""
-1. Loading and normalizing CIFAR10
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Using ``torchvision``, it’s extremely easy to load CIFAR10.
-"""
 import torch
-import torchvision
-import torchvision.transforms as transforms
-
-########################################################################
-# The output of torchvision datasets are PILImage images of range [0, 1].
-# We transform them to Tensors of normalized range [-1, 1].
-
-transform = transforms.Compose(
-    [transforms.ToTensor(),
-     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
-
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                        download=True, transform=transform)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
-                                          shuffle=True, num_workers=2)
-
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                       download=True, transform=transform)
-testloader = torch.utils.data.DataLoader(testset, batch_size=4,
-                                         shuffle=False, num_workers=2)
-
-classes = ('plane', 'car', 'bird', 'cat',
-           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-
-
-########################################################################
-# 2. Define a Convolution Neural Network
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# Copy the neural network from the Neural Networks section before and modify it to
-# take 3-channel images (instead of 1-channel images as it was defined).
-
+from torch.autograd import Variable
 import torch.nn as nn
-import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import torchvision.datasets as dsets
+import torchvision.transforms as transforms
+import numpy as np
+import os
 
+lr = 0.0002
+test_num = 50
+num_epochs = 200
+batch_size = 50
+z_dim = 40
 
-class Net(nn.Module):
+idx = [i for i in range(10) for _ in range(5)]
+print idx
+for i in range(50):
+    print (i // 5) + (i % 5) * 10 + 1
+
+# Define a set of transforms to be applied on the training images
+# Convert it to torch Tensor
+transform = transforms.Compose([
+        transforms.ToTensor()
+])
+
+# Download and Load the CIFAR-10 Dataset
+train_dataset = dsets.CIFAR10(root='./data/', train=True, download=True, transform=transform)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+num_batches = len(train_loader)     # Number of batches per Epoch
+
+# Define the Generator, a simple CNN with 1 fully connected and 4 convolution layers
+class Generator(nn.Module):
     def __init__(self):
-        super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 6, 5)
-        self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1 = nn.Linear(16 * 5 * 5, 120)
-        self.fc2 = nn.Linear(120, 84)
-        self.fc3 = nn.Linear(84, 10)
+        super(Generator, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(z_dim+10, 4*4*256),
+            nn.LeakyReLU()
+        )
 
-    def forward(self, x):
-        x = self.pool(F.relu(self.conv1(x)))
-        x = self.pool(F.relu(self.conv2(x)))
-        x = x.view(-1, 16 * 5 * 5)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
+        self.cnn = nn.Sequential(
+            nn.ConvTranspose2d(256, 128, 3, stride=2, padding=0, output_padding=0),
+            nn.LeakyReLU(),
+            nn.ConvTranspose2d(128, 64, 3, stride=2, padding=1, output_padding=0),
+            nn.LeakyReLU(),
+            nn.ConvTranspose2d(64, 64, 3, stride=2, padding=2, output_padding=1),
+            nn.LeakyReLU(),
+            nn.Conv2d(64, 3, 3, stride=1, padding=1),
+            nn.Tanh()
+        )
+
+    def forward(self, z, c):
+        x = torch.cat((z, c), 1)
+        x = self.model(x)
+        x = x.view(-1, 256, 4, 4)
+        x = self.cnn(x)
         return x
 
 
-net = Net()
+# Define the Discriminator, a simple CNN with 3 convolution and 2 fully connected layers
+class Discriminator(nn.Module):
+    def __init__(self):
+        super(Discriminator, self).__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(3, 64, 3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 128, 3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(128, 256, 3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(4*4*256, 128),
+            nn.LeakyReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, 1),
+            nn.Sigmoid()
+        )
 
-########################################################################
-# 3. Define a Loss function and optimizer
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-# Let's use a Classification Cross-Entropy loss and SGD with momentum.
-
-import torch.optim as optim
-
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
-
-########################################################################
-# 4. Train the network
-# ^^^^^^^^^^^^^^^^^^^^
-#
-# This is when things start to get interesting.
-# We simply have to loop over our data iterator, and feed the inputs to the
-# network and optimize.
-
-for epoch in range(2):  # loop over the dataset multiple times
-
-    running_loss = 0.0
-    for i, data in enumerate(trainloader, 0):
-        # get the inputs
-        inputs, labels = data
-
-        # zero the parameter gradients
-        optimizer.zero_grad()
-
-        # forward + backward + optimize
-        outputs = net(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        # print statistics
-        running_loss += loss.item()
-        if i % 2000 == 1999:    # print every 2000 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 2000))
-            running_loss = 0.0
-
-print('Finished Training')
-
-########################################################################
-# 5. Test the network on the test data
-# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-#
-# We have trained the network for 2 passes over the training dataset.
-# But we need to check if the network has learnt anything at all.
-#
-# We will check this by predicting the class label that the neural network
-# outputs, and checking it against the ground-truth. If the prediction is
-# correct, we add the sample to the list of correct predictions.
-#
-# Okay, first step. Let us display an image from the test set to get familiar.
-
-dataiter = iter(testloader)
-images, labels = dataiter.next()
-
-# print images
-imshow(torchvision.utils.make_grid(images))
-print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
-
-########################################################################
-# Okay, now let us see what the neural network thinks these examples above are:
-
-outputs = net(images)
-
-########################################################################
-# The outputs are energies for the 10 classes.
-# Higher the energy for a class, the more the network
-# thinks that the image is of the particular class.
-# So, let's get the index of the highest energy:
-_, predicted = torch.max(outputs, 1)
-
-print('Predicted: ', ' '.join('%5s' % classes[predicted[j]]
-                              for j in range(4)))
-
-########################################################################
-# The results seem pretty good.
-#
-# Let us look at how the network performs on the whole dataset.
-
-correct = 0
-total = 0
-with torch.no_grad():
-    for data in testloader:
-        images, labels = data
-        outputs = net(images)
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-
-print('Accuracy of the network on the 10000 test images: %d %%' % (
-    100 * correct / total))
-
-########################################################################
-# That looks waaay better than chance, which is 10% accuracy (randomly picking
-# a class out of 10 classes).
-# Seems like the network learnt something.
-#
-# Hmmm, what are the classes that performed well, and the classes that did
-# not perform well:
-
-class_correct = list(0. for i in range(10))
-class_total = list(0. for i in range(10))
-with torch.no_grad():
-    for data in testloader:
-        images, labels = data
-        outputs = net(images)
-        _, predicted = torch.max(outputs, 1)
-        c = (predicted == labels).squeeze()
-        for i in range(4):
-            label = labels[i]
-            class_correct[label] += c[i].item()
-            class_total[label] += 1
+    def forward(self, x):
+        x = self.cnn(x)
+        x = x.view(-1, 4*4*256)
+        x = self.fc(x)
+        return x
 
 
-for i in range(10):
-    print('Accuracy of %5s : %2d %%' % (
-        classes[i], 100 * class_correct[i] / class_total[i]))
+# Define the conditional distribution Q(c|X), a simple CNN with 3 convolution and 2 fully connected layers
+class Q(nn.Module):
+    def __init__(self):
+        super(Q, self).__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(3, 16, 3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(16, 32, 3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            nn.MaxPool2d(2, 2),
+            nn.Conv2d(32, 64, 3, stride=1, padding=1),
+            nn.LeakyReLU(),
+            nn.MaxPool2d(2, 2)
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(4 * 4 * 64, 128),
+            nn.LeakyReLU(),
+            nn.Linear(4*4*64, 10),
+            nn.Softmax()
+        )
 
-########################################################################
-# Okay, so what next?
-#
-# How do we run these neural networks on the GPU?
-#
-# Training on GPU
-# ----------------
-# Just like how you transfer a Tensor on to the GPU, you transfer the neural
-# net onto the GPU.
-#
-# Let's first define our device as the first visible cuda device if we have
-# CUDA available:
+    def forward(self, x):
+        x = self.cnn(x)
+        x = x.view(-1, 4*4*64)
+        x = self.fc(x)
+        return x
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# Assume that we are on a CUDA machine, then this should print a CUDA device:
+def draw_c(size):
+    # Draw categorical latent code 'c'
+    c = np.random.multinomial(1, 10*[0.1], size=size)
+    c = Variable(torch.from_numpy(c.astype('float32')).cuda())
+    return c
 
-print(device)
+discriminator = Discriminator().cuda()
+generator = Generator().cuda()
+q = Q().cuda()
 
+# The classification loss of Discriminator, binary classification, 1 -> real sample, 0 -> fake sample
+criterion = nn.BCELoss()
+
+# Define optimizers
+optimizer_d = torch.optim.Adam(discriminator.parameters(), lr=lr)
+optimizer_g = torch.optim.Adam(generator.parameters(), lr=lr)
+optimizer_q = torch.optim.Adam(list(generator.parameters()) + list(q.parameters()), lr=lr)
+
+# Draw 50 samples from the input distribution as a fixed test set (5 sample per 'c' latent code)
+# Can follow how the generator output evolves
+test_z = Variable(torch.randn(test_num, z_dim).cuda())
+
+for ep in range(num_epochs):
+    for n, (images, _) in enumerate(train_loader):
+
+        images = Variable(images.cuda())
+        labels_real = Variable(torch.ones(batch_size).cuda())       # Labels for real images - all ones
+        labels_fake = Variable(torch.zeros(batch_size).cuda())      # Labels for fake images - all ones
+
+        # Train the discriminator, it tries to discriminate between real and fake (generated) samples
+        discriminator.zero_grad()
+        outputs = discriminator(images)
+        loss_real = criterion(outputs, labels_real)
+
+        z = Variable(torch.randn(batch_size, z_dim).cuda())
+        c = draw_c(batch_size)
+        images_fake = generator(z, c)
+        outputs = discriminator(images_fake.detach())
+        loss_fake = criterion(outputs, labels_fake)
+
+        loss_d = loss_real + loss_fake              # Calculate the total loss
+        loss_d.backward()                           # Backpropagation
+        optimizer_d.step()                          # Update the weights
+
+        # Train the generator, it tries to fool the discriminator
+        # Draw samples from the input distribution and pass to generator
+        z = Variable(torch.randn(batch_size, z_dim).cuda())
+        images_fake = generator(z, c)
+
+        # Pass the genrated images to discriminator
+        outputs = discriminator(images_fake)
+
+        generator.zero_grad()
+        loss_g = criterion(outputs, labels_real)    # Calculate the loss
+        loss_g.backward()                           # Backpropagation
+        optimizer_g.step()                          # Update the weights
+
+        # Train the conditional distribution Q(c|X)
+        # We maximize mutual information between c and G(z,c)
+        q.zero_grad()
+        images_fake = generator(z, c)   # Generate a fake image
+        Q_c_given_x = q(images_fake)    # Gives the latent code 'c' given the generated image
+        cross_entropy = torch.mean(-torch.sum(c * torch.log(Q_c_given_x + 1e-8), dim=1))
+        entropy = torch.mean(-torch.sum(c * torch.log(c + 1e-8), dim=1))                    # Entropy of the prior, H(c)
+        loss_q = cross_entropy + entropy
+        loss_q.backward()
+        optimizer_q.step()
+
+        if not n%10:
+            print('epoch: {} - loss_d: {} - loss_g: {} - loss_q: {}'.format(ep, loss_d.data[0], loss_g.data[0], loss_q.data[0]))
+
+    # Save the test results after each Epoch
+    print('Testing ...')
+    idx = [i for i in range(10) for _ in range(5)]
+    c = np.zeros([50, 10])
+    c[range(50), idx] = 1
+    c = Variable(torch.from_numpy(c.astype('float32')).cuda())
+    images_test = generator(test_z, c).data.cpu().numpy()
+
+    images_test = np.moveaxis(images_test, 1, -1)
+    if not os.path.isdir('results'):
+        os.makedirs('results')
+
+    plt.figure(num=None, figsize=(6, 8), dpi=100)
+    for i in range(50):
+        plt.subplot(5, 10, (i//5)+(i%5)*10+1)
+        plt.axis('off')
+        plt.imshow(images_test[i])
+        plt.savefig('results/cfar10-info-gan-e{}.png'.format(ep))
+    plt.clf()
+    plt.close()
+    print('A new test image saved !')
