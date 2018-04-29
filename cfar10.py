@@ -1,4 +1,60 @@
+# -*- coding: utf-8 -*-
+"""
+Training a classifier
+=====================
 
+This is it. You have seen how to define neural networks, compute loss and make
+updates to the weights of the network.
+
+Now you might be thinking,
+
+What about data?
+----------------
+
+Generally, when you have to deal with image, text, audio or video data,
+you can use standard python packages that load data into a numpy array.
+Then you can convert this array into a ``torch.*Tensor``.
+
+-  For images, packages such as Pillow, OpenCV are useful
+-  For audio, packages such as scipy and librosa
+-  For text, either raw Python or Cython based loading, or NLTK and
+   SpaCy are useful
+
+Specifically for vision, we have created a package called
+``torchvision``, that has data loaders for common datasets such as
+Imagenet, CIFAR10, MNIST, etc. and data transformers for images, viz.,
+``torchvision.datasets`` and ``torch.utils.data.DataLoader``.
+
+This provides a huge convenience and avoids writing boilerplate code.
+
+For this tutorial, we will use the CIFAR10 dataset.
+It has the classes: ‘airplane’, ‘automobile’, ‘bird’, ‘cat’, ‘deer’,
+‘dog’, ‘frog’, ‘horse’, ‘ship’, ‘truck’. The images in CIFAR-10 are of
+size 3x32x32, i.e. 3-channel color images of 32x32 pixels in size.
+
+.. figure:: /_static/img/cifar10.png
+   :alt: cifar10
+
+   cifar10
+
+
+Training an image classifier
+----------------------------
+
+We will do the following steps in order:
+
+1. Load and normalizing the CIFAR10 training and test datasets using
+   ``torchvision``
+2. Define a Convolution Neural Network
+3. Define a loss function
+4. Train the network on the training data
+5. Test the network on the test data
+
+1. Loading and normalizing CIFAR10
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Using ``torchvision``, it’s extremely easy to load CIFAR10.
+"""
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -11,19 +67,43 @@ transform = transforms.Compose(
     [transforms.ToTensor(),
      transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
-#trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-#                                        download=True, transform=transform)
-train_loader = torch.utils.data.DataLoader(
-    torchvision.datasets.CIFAR10('./cifar-10-batches-py', download = True,train = True, transform = transform), 
-    batch_size=4, shuffle=True, num_workers=2)
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+                                        download=True, transform=transform)
+trainloader = torch.utils.data.DataLoader(trainset, batch_size=4,
+                                          shuffle=True, num_workers=2)
 
-testset = torchvision.datasets.CIFAR10(root='./cifar-10-batches-py', train=False,
+testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                        download=True, transform=transform)
-test_loader = torch.utils.data.DataLoader(testset, batch_size=4,
+testloader = torch.utils.data.DataLoader(testset, batch_size=4,
                                          shuffle=False, num_workers=2)
 
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+########################################################################
+# Let us show some of the training images, for fun.
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# functions to show an image
+
+
+def imshow(img):
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+
+# get some random training images
+dataiter = iter(trainloader)
+images, labels = dataiter.next()
+
+# show images
+imshow(torchvision.utils.make_grid(images))
+# print labels
+print(' '.join('%5s' % classes[labels[j]] for j in range(4)))
+
 
 ########################################################################
 # 2. Define a Convolution Neural Network
@@ -38,20 +118,21 @@ import torch.nn.functional as F
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10,20, kernel_size=5)
-        self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(320,50)
-        self.fc2 = nn.Linear(50,10)
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
+        self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
-        x = F.relu(f.max_pool2d(self.conv1(x),2))
-        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-        x = x.view(-1, 320)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
-        x = F.dropout(x, training=self.training)
-        x = self.fc2(x)
-        return F.log_softmax(x, dim=1)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x
 
 
 net = Net()
@@ -77,7 +158,7 @@ optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 for epoch in range(2):  # loop over the dataset multiple times
 
     running_loss = 0.0
-    for i, data in enumerate(train_loader, 0):
+    for i, data in enumerate(trainloader, 0):
         # get the inputs
         inputs, labels = data
 
@@ -112,7 +193,7 @@ print('Finished Training')
 #
 # Okay, first step. Let us display an image from the test set to get familiar.
 
-dataiter = iter(test_loader)
+dataiter = iter(testloader)
 images, labels = dataiter.next()
 
 # print images
@@ -142,7 +223,7 @@ print('Predicted: ', ' '.join('%5s' % classes[predicted[j]]
 correct = 0
 total = 0
 with torch.no_grad():
-    for data in test_loader:
+    for data in testloader:
         images, labels = data
         outputs = net(images)
         _, predicted = torch.max(outputs.data, 1)
@@ -163,7 +244,7 @@ print('Accuracy of the network on the 10000 test images: %d %%' % (
 class_correct = list(0. for i in range(10))
 class_total = list(0. for i in range(10))
 with torch.no_grad():
-    for data in test_loader:
+    for data in testloader:
         images, labels = data
         outputs = net(images)
         _, predicted = torch.max(outputs, 1)
@@ -196,3 +277,58 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Assume that we are on a CUDA machine, then this should print a CUDA device:
 
 print(device)
+
+########################################################################
+# The rest of this section assumes that `device` is a CUDA device.
+#
+# Then these methods will recursively go over all modules and convert their
+# parameters and buffers to CUDA tensors:
+#
+# .. code:: python
+#
+#     net.to(device)
+#
+#
+# Remember that you will have to send the inputs and targets at every step
+# to the GPU too:
+#
+# .. code:: python
+#
+#         inputs, labels = inputs.to(device), labels.to(device)
+#
+# Why dont I notice MASSIVE speedup compared to CPU? Because your network
+# is realllly small.
+#
+# **Exercise:** Try increasing the width of your network (argument 2 of
+# the first ``nn.Conv2d``, and argument 1 of the second ``nn.Conv2d`` –
+# they need to be the same number), see what kind of speedup you get.
+#
+# **Goals achieved**:
+#
+# - Understanding PyTorch's Tensor library and neural networks at a high level.
+# - Train a small neural network to classify images
+#
+# Training on multiple GPUs
+# -------------------------
+# If you want to see even more MASSIVE speedup using all of your GPUs,
+# please check out :doc:`data_parallel_tutorial`.
+#
+# Where do I go next?
+# -------------------
+#
+# -  :doc:`Train neural nets to play video games </intermediate/reinforcement_q_learning>`
+# -  `Train a state-of-the-art ResNet network on imagenet`_
+# -  `Train a face generator using Generative Adversarial Networks`_
+# -  `Train a word-level language model using Recurrent LSTM networks`_
+# -  `More examples`_
+# -  `More tutorials`_
+# -  `Discuss PyTorch on the Forums`_
+# -  `Chat with other users on Slack`_
+#
+# .. _Train a state-of-the-art ResNet network on imagenet: https://github.com/pytorch/examples/tree/master/imagenet
+# .. _Train a face generator using Generative Adversarial Networks: https://github.com/pytorch/examples/tree/master/dcgan
+# .. _Train a word-level language model using Recurrent LSTM networks: https://github.com/pytorch/examples/tree/master/word_language_model
+# .. _More examples: https://github.com/pytorch/examples
+# .. _More tutorials: https://github.com/pytorch/tutorials
+# .. _Discuss PyTorch on the Forums: https://discuss.pytorch.org/
+# .. _Chat with other users on Slack: http://pytorch.slack.com/messages/beginner/
