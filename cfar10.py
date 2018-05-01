@@ -32,21 +32,24 @@ import torch.nn.functional as F
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.fc1 = nn.Linear(16*5*5,120)
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.fc1 = nn.Linear(16 * 5 * 5, 120)
         self.fc2 = nn.Linear(120, 84)
+        self.fc3 = nn.Linear(84, 10)
 
     def forward(self, x):
-        x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-        x = x.view(-1, 320)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = x.view(-1, 16 * 5 * 5)
         x = F.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = F.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
 
-net = Net()
+model = Net()
 
 ########################################################################
 # 3. Define a Loss function and optimizer
@@ -55,8 +58,8 @@ net = Net()
 
 import torch.optim as optim
 
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+#criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
 ########################################################################
 # 4. Train the network
@@ -65,7 +68,37 @@ optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 # This is when things start to get interesting.
 # We simply have to loop over our data iterator, and feed the inputs to the
 # network and optimize.
+def train(epoch):
+    model.train()
+    for batch_idx, (data, target) in enumerate (trainloader):
+        data, target = Variable(data), Variable(target)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        optimizer.step()
+def test():
+    model.eval()
+    test_loss = 0
+    correct = 0
+    for data,target in testloader:
+        data, target = Variable(data, volatile = True), Variable(target)
+        output = model(data)
+        test_loss += F.nll_loss(output, target, size_average=False).data[0] # sum up batch loss
+        pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+        correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
 
+    test_loss /= len(testloader.dataset)
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        test_loss, correct, len(testloader.dataset),
+        100. * correct / len(testloader.dataset)))
+
+
+for epoch in range(1, 10):
+    train(epoch)
+    test()
+
+'''
 for epoch in range(2):  # loop over the dataset multiple times
 
     running_loss = 0.0
@@ -138,3 +171,4 @@ for data in testloader:
 
 print('Accuracy of the network on the 10000 test images: %d %%' % (
     100 * correct / total))
+'''
